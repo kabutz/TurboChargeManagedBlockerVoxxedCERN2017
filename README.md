@@ -1,4 +1,3 @@
 Turbo Charge CPU Utilization in Fork/Join Using the ManagedBlocker
 
-
-Code snippets
+The "present" branch contains the 6 steps shown during the talk.
