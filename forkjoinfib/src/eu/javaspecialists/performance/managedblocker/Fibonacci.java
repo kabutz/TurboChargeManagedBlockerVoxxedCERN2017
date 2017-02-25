@@ -12,10 +12,12 @@ public class Fibonacci {
         cache.put(1, BigInteger.ONE);
         return f(n, cache);
     }
-    public BigInteger f(int n, Map<Integer, BigInteger> cache) {
-        BigInteger result = cache.get(n);
-        if (result== null) {
 
+    private final BigInteger RESERVED = BigInteger.valueOf(-1000);
+
+    public BigInteger f(int n, Map<Integer, BigInteger> cache) {
+        BigInteger result = cache.putIfAbsent(n, RESERVED);
+        if (result == null) {
             int half = (n + 1) / 2;
 
             ForkJoinTask<BigInteger> f0_task = new RecursiveTask<BigInteger>() {
@@ -40,7 +42,20 @@ public class Fibonacci {
                     System.out.println("f(" + n + ") = " + time);
                 }
             }
-            cache.put(n, result);
+            synchronized (RESERVED) {
+                cache.put(n, result);
+                RESERVED.notifyAll();
+            }
+        } else if (result == RESERVED) {
+            synchronized (RESERVED) {
+                while((result = cache.get(n)) == RESERVED) {
+                    try {
+                        RESERVED.wait();
+                    } catch (InterruptedException e) {
+                        throw new CancellationException("interrupted");
+                    }
+                }
+            }
         }
         return result;
     }
