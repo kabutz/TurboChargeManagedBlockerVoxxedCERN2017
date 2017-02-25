@@ -35,7 +35,8 @@ import java.io.ObjectOutputStream;
 import java.io.ObjectStreamField;
 import java.util.Arrays;
 import java.util.Random;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.*;
+
 import sun.misc.DoubleConsts;
 import sun.misc.FloatConsts;
 
@@ -1709,16 +1710,21 @@ public class BigInteger extends Number implements Comparable<BigInteger> {
 
         BigInteger v0, v1, v2, vm1, vinf, t1, t2, tm1, da1, db1;
 
-        v0 = a0.multiply(b0);
+        MultiplyTask v0_task = new MultiplyTask(a0, b0);
+        v0_task.fork();
         da1 = a2.add(a0);
         db1 = b2.add(b0);
         vm1 = da1.subtract(a1).multiply(db1.subtract(b1));
         da1 = da1.add(a1);
         db1 = db1.add(b1);
-        v1 = da1.multiply(db1);
+        v0 = v0_task.join();
+
+        MultiplyTask v1_task = new MultiplyTask(da1, db1);
+        v1_task.fork();
         v2 = da1.add(a2).shiftLeft(1).subtract(a0).multiply(
              db1.add(b2).shiftLeft(1).subtract(b0));
         vinf = a2.multiply(b2);
+        v1 = v1_task.join();
 
         // The algorithm requires two divisions by 2 and one by 3.
         // All divisions are known to be exact, that is, they do not produce
@@ -2022,6 +2028,29 @@ public class BigInteger extends Number implements Comparable<BigInteger> {
         return xhs.shiftLeft(half*32).add(xl.add(xh).square().subtract(xhs.add(xls))).shiftLeft(half*32).add(xls);
     }
 
+    private static class SquareTask extends RecursiveTask<BigInteger> {
+        private final BigInteger a;
+
+        private SquareTask(BigInteger a) {
+            this.a = a;
+        }
+
+        protected BigInteger compute() {
+            return a.square();
+        }
+    }
+    private static class MultiplyTask extends RecursiveTask<BigInteger> {
+        private final BigInteger a,b;
+
+        public MultiplyTask(BigInteger a, BigInteger b) {
+            this.a = a;
+            this.b = b;
+        }
+
+        protected BigInteger compute() {
+            return a.multiply(b);
+        }
+    }
     /**
      * Squares a BigInteger using the 3-way Toom-Cook squaring algorithm.  It
      * should be used when both numbers are larger than a certain threshold
@@ -2046,13 +2075,18 @@ public class BigInteger extends Number implements Comparable<BigInteger> {
         a0 = getToomSlice(k, r, 2, len);
         BigInteger v0, v1, v2, vm1, vinf, t1, t2, tm1, da1;
 
-        v0 = a0.square();
+        SquareTask v0_task = new SquareTask(a0);
+        v0_task.fork();
         da1 = a2.add(a0);
         vm1 = da1.subtract(a1).square();
         da1 = da1.add(a1);
-        v1 = da1.square();
+        v0 = v0_task.join();  // join
+        SquareTask v1_task = new SquareTask(da1);
+        v1_task.fork();
         vinf = a2.square();
         v2 = da1.add(a2).shiftLeft(1).subtract(a0).square();
+        // join
+        v1 = v1_task.join();
 
         // The algorithm requires two divisions by 2 and one by 3.
         // All divisions are known to be exact, that is, they do not produce

@@ -1,7 +1,7 @@
 package eu.javaspecialists.performance.managedblocker;
 
-import java.math.*;
-import java.util.*;
+import eu.javaspecialists.performance.math.*;
+
 import java.util.concurrent.*;
 
 public class Fibonacci {
