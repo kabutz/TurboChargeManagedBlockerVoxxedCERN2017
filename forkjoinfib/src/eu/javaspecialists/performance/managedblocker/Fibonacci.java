@@ -15,6 +15,30 @@ public class Fibonacci {
 
     private final BigInteger RESERVED = BigInteger.valueOf(-1000);
 
+    private class ReservedBlocker implements ForkJoinPool.ManagedBlocker {
+        private volatile BigInteger result;
+        private final int n;
+        private final Map<Integer, BigInteger> cache;
+
+        public ReservedBlocker(int n, Map<Integer, BigInteger> cache) {
+            this.n = n;
+            this.cache = cache;
+        }
+
+        public boolean isReleasable() { // condition predicate
+            return (result = cache.get(n)) != RESERVED;
+        }
+
+        public boolean block() throws InterruptedException {
+            synchronized (RESERVED) {
+                while (!isReleasable()) {
+                    RESERVED.wait();
+                }
+            }
+            return true;
+        }
+    }
+
     public BigInteger f(int n, Map<Integer, BigInteger> cache) {
         BigInteger result = cache.putIfAbsent(n, RESERVED);
         if (result == null) {
@@ -47,14 +71,12 @@ public class Fibonacci {
                 RESERVED.notifyAll();
             }
         } else if (result == RESERVED) {
-            synchronized (RESERVED) {
-                while((result = cache.get(n)) == RESERVED) {
-                    try {
-                        RESERVED.wait();
-                    } catch (InterruptedException e) {
-                        throw new CancellationException("interrupted");
-                    }
-                }
+            try {
+                ReservedBlocker blocker = new ReservedBlocker(n, cache);
+                ForkJoinPool.managedBlock(blocker);
+                result = blocker.result;
+            } catch (InterruptedException e) {
+                throw new CancellationException("interrupted");
             }
         }
         return result;
