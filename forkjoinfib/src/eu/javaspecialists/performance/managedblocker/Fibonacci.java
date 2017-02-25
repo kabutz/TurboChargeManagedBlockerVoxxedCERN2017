@@ -7,78 +7,69 @@ import java.util.concurrent.*;
 
 public class Fibonacci {
     public BigInteger f(int n) {
-        Map<Integer, BigInteger> cache = new ConcurrentHashMap<>();
-        cache.put(0, BigInteger.ZERO);
-        cache.put(1, BigInteger.ONE);
+        Map<Integer, ForkJoinTask<BigInteger>> cache = new ConcurrentHashMap<>();
+        cache.put(0, ForkJoinTask.adapt(() ->BigInteger.ZERO).fork());
+        cache.put(1, ForkJoinTask.adapt(() -> BigInteger.ONE).fork());
         return f(n, cache);
     }
 
-    private final BigInteger RESERVED = BigInteger.valueOf(-1000);
+    public BigInteger f(int n, Map<Integer, ForkJoinTask<BigInteger>> cache) {
+        ForkJoinTask<BigInteger> computation = new RecursiveTask<BigInteger>() {
+            @Override
+            protected BigInteger compute() {
+                int half = (n + 1) / 2;
+                ForkJoinTask<BigInteger> f0_task = new RecursiveTask<BigInteger>() {
+                    protected BigInteger compute() {
+                        return f(half - 1, cache);
+                    }
+                }.fork();
+                BigInteger f1 = f(half, cache);
+                BigInteger f0 = f0_task.join();
 
-    private class ReservedBlocker implements ForkJoinPool.ManagedBlocker {
-        private volatile BigInteger result;
-        private final int n;
-        private final Map<Integer, BigInteger> cache;
+                BigInteger result = (n % 2 == 1)
+                        ? f0.multiply(f0).add(f1.multiply(f1))
+                        : f0.shiftLeft(1).add(f1).multiply(f1);
 
-        public ReservedBlocker(int n, Map<Integer, BigInteger> cache) {
-            this.n = n;
-            this.cache = cache;
-        }
-
-        public boolean isReleasable() { // condition predicate
-            return (result = cache.get(n)) != RESERVED;
-        }
-
-        public boolean block() throws InterruptedException {
-            synchronized (RESERVED) {
-                while (!isReleasable()) {
-                    RESERVED.wait();
-                }
+                return result;
             }
-            return true;
+        };
+
+        ForkJoinTask<BigInteger> alreadyComputing = cache.putIfAbsent(n, computation);
+
+        if (alreadyComputing == null) {
+            return computation.invoke();
         }
-    }
-
-    public BigInteger f(int n, Map<Integer, BigInteger> cache) {
-        BigInteger result = cache.putIfAbsent(n, RESERVED);
-        if (result == null) {
-            int half = (n + 1) / 2;
-
-            ForkJoinTask<BigInteger> f0_task = new RecursiveTask<BigInteger>() {
-                protected BigInteger compute() {
-                    return f(half - 1, cache);
-                }
-            };
-            f0_task.fork();
-            BigInteger f1 = f(half, cache);
-            BigInteger f0 = f0_task.join();
-
-            long time = n > 1000 ? System.currentTimeMillis() : 0;
+        else {
             try {
-                if (n % 2 == 1) {
-                    result = f0.multiply(f0).add(f1.multiply(f1));
-                } else {
-                    result = f0.shiftLeft(1).add(f1).multiply(f1);
-                }
-            } finally {
-                time = n > 1000 ? System.currentTimeMillis() - time : 0;
-                if (time > 20) {
-                    System.out.println("f(" + n + ") = " + time);
-                }
-            }
-            synchronized (RESERVED) {
-                cache.put(n, result);
-                RESERVED.notifyAll();
-            }
-        } else if (result == RESERVED) {
-            try {
-                ReservedBlocker blocker = new ReservedBlocker(n, cache);
+                FJTBlocker blocker = new FJTBlocker(alreadyComputing);
                 ForkJoinPool.managedBlock(blocker);
-                result = blocker.result;
+                return blocker.result;
             } catch (InterruptedException e) {
                 throw new CancellationException("interrupted");
             }
         }
-        return result;
+    }
+
+    private class FJTBlocker implements ForkJoinPool.ManagedBlocker {
+        private final ForkJoinTask<BigInteger> alreadyComputing;
+        private BigInteger result;
+
+        private FJTBlocker(ForkJoinTask<BigInteger> alreadyComputing) {
+            this.alreadyComputing = alreadyComputing;
+        }
+
+        public boolean block() throws InterruptedException {
+            result = alreadyComputing.join();
+            return true;
+        }
+
+        public boolean isReleasable() {
+            if (alreadyComputing.isDone()) {
+                result = alreadyComputing.join();
+                return true;
+            } else {
+                return false;
+            }
+        }
     }
 }
